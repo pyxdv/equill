@@ -185,3 +185,88 @@ def test_cli_scan_defaults_to_opengrep_with_auto_rules():
     defaults = {p.name: p.default for p in scan.params}
     assert defaults["scanner"] == "opengrep"
     assert defaults["semgrep_config"] == "auto"
+
+
+# --- review fixes -------------------------------------------------------------
+
+def test_javascript_also_selects_typescript_rules(tmp_path):
+    (tmp_path / "App.jsx").write_text("")
+    assert "typescript" in rules.detect_dirs(tmp_path)
+
+
+@pytest.mark.parametrize("name", ["Dockerfile", "dockerfile", "Dockerfile.prod", "prod.dockerfile"])
+def test_dockerfile_variants_select_dockerfile_rules(tmp_path, name):
+    (tmp_path / name).write_text("FROM scratch\n")
+    assert {"dockerfile", "generic/dockerfile"} <= set(rules.detect_dirs(tmp_path))
+
+
+def test_a_single_file_target_selects_its_language(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text("x = 1\n")
+    assert "python" in rules.detect_dirs(f)
+
+
+def test_stable_rule_id_drops_any_cache_prefix():
+    from equill.pipeline import stable_rule_id
+
+    tail = "python.flask.security.injection.subprocess-injection"
+    for prefix in (
+        "home.runner..cache.equill",
+        "tmp.x.rules.eqcache",  # a folder named rules in the cache path
+        "C:.Users.me.AppData.Local.equill",
+    ):
+        rid = f"{prefix}.opengrep-rules.{rules.RULES_COMMIT}.rules.{tail}"
+        assert stable_rule_id(rid) == tail
+    assert stable_rule_id("p.default.rule") == "p.default.rule"
+
+
+def test_auto_scan_reports_stable_rule_ids_and_provenance(tmp_path, monkeypatch):
+    from equill.pipeline import run_pipeline
+    from equill.scan import SubprocessResult
+
+    cached = tmp_path / "rules" / "cache" / "opengrep-rules" / rules.RULES_COMMIT / "rules"
+    rules.curate(_checkout(tmp_path / "src"), cached)
+    monkeypatch.setattr(rules, "fetch", lambda cache=None: cached)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "main.py").write_text("eval(x)\n")
+    dotted = ".".join(p for p in cached.parts if p not in ("/", "\\"))
+    payload = {"results": [{
+        "check_id": f"{dotted}.python.lang.security.eval", "path": "main.py",
+        "start": {"line": 1}, "end": {"line": 1},
+        "extra": {"severity": "WARNING", "message": "m", "lines": "eval(x)",
+                  "metadata": {"cwe": ["CWE-95"]}}}]}
+
+    class Runner:
+        def run(self, args, timeout, env=None):
+            import json
+            return SubprocessResult(returncode=0, stdout=json.dumps(payload), stderr="")
+
+    report = run_pipeline(PipelineConfig(repo_path=repo, commit_sha="c"), Runner())
+    assert report.findings[0].rule_id == "python.lang.security.eval"
+    assert report.rules.endswith("(ai/python, generic/secrets, python)")
+
+
+def test_a_peer_that_installed_the_rules_first_is_not_an_error(tmp_path):
+    src = _checkout(tmp_path / "src")
+    expected = tmp_path / "expected"
+    rules.curate(src, expected)
+    digest = rules.tree_digest(expected)
+    root = tmp_path / "cache" / "opengrep-rules" / "abc123"
+
+    def download(url):
+        # Another process finishes first, while this one is downloading.
+        (root / "rules").mkdir(parents=True)
+        rules.curate(src, root / "rules")
+        return _tarball(src)
+
+    got = rules.fetch(cache=tmp_path / "cache", commit="abc123", digest=digest,
+                      download=download, use_git=False)
+    assert rules.tree_digest(got) == digest
+
+
+@pytest.mark.parametrize("payload", [b"", b"not a tarball", b"\x1f\x8b\x08\x00truncated"])
+def test_a_broken_download_is_a_rules_error(tmp_path, payload):
+    with pytest.raises(rules.RulesError, match="offline"):
+        rules.fetch(cache=tmp_path / "cache", commit="abc123", digest=None,
+                    download=lambda url: payload, use_git=False)

@@ -13,7 +13,7 @@ inputs:
     description: Directory to scan, relative to the workspace.
     default: .
   scanner:
-    description: opengrep (default, installed by the action) | semgrep (installed by the action) | cppcheck.
+    description: opengrep (default; installed by the action on Linux and macOS runners) | semgrep (installed by the action) | cppcheck.
     default: opengrep
   config:
     description: >-
@@ -23,8 +23,9 @@ inputs:
     default: auto
   scanner-output:
     description: >-
-      A Semgrep JSON, or (with scanner cppcheck) a Cppcheck XML, your workflow
-      already produced. When set, equill maps it instead of running (or
+      A scan your workflow already produced: a Semgrep JSON (set scanner:
+      semgrep, or opengrep for an Opengrep JSON) or a Cppcheck XML (with
+      scanner: cppcheck). When set, equill maps it instead of running (or
       installing) a scanner.
     default: ''
   fail-on:
@@ -113,16 +114,17 @@ runs:
       # scan step only, like Semgrep below.
       run: |
         set -euo pipefail
-        case "$(uname -m)" in
-          x86_64|amd64) asset=opengrep_manylinux_x86
+        case "$RUNNER_OS/$(uname -m)" in
+          Linux/x86_64|Linux/amd64) asset=opengrep_manylinux_x86
             pinned=a66aa3278457f02b287b985a45b6762aebcaba5000f2689245fd1ed86d1456c7 ;;
-          aarch64|arm64) asset=opengrep_manylinux_aarch64
+          Linux/aarch64|Linux/arm64) asset=opengrep_manylinux_aarch64
             pinned=90acea5df4b733083f388d4feeb250ca802f671b33d1f222653d1e571dd2b0d8 ;;
-          *) echo "::error::equill installs Opengrep on Linux x86_64/aarch64 only; got $(uname -m)"; exit 1 ;;
+          macOS/arm64) asset=opengrep_osx_arm64
+            pinned=f1aaa30b88959cb82522c4e1475816278a1f161f994509a518453c0455f9d24b ;;
+          macOS/x86_64) asset=opengrep_osx_x86
+            pinned=fcf47da30d5c3a11119f2ec4e0d1ee55e3c3822e8f90d909bf9f33dfce99044a ;;
+          *) echo "::error::equill installs Opengrep on Linux and macOS runners; got $RUNNER_OS/$(uname -m). Use scanner: semgrep or scanner-output."; exit 1 ;;
         esac
-        if [ "$RUNNER_OS" != "Linux" ]; then
-          echo "::error::equill installs Opengrep on Linux runners only; use scanner: semgrep or scanner-output"; exit 1
-        fi
         expected="$OPENGREP_SHA256"
         if [ -z "$expected" ]; then
           if [ "$OPENGREP_VERSION" != "v1.30.2" ]; then
@@ -134,7 +136,11 @@ runs:
         mkdir -p "$dir"
         curl -fsSL --retry 3 -o "$dir/opengrep" \
           "https://github.com/opengrep/opengrep/releases/download/$OPENGREP_VERSION/$asset"
-        echo "$expected  $dir/opengrep" | sha256sum -c -
+        if command -v sha256sum >/dev/null; then
+          echo "$expected  $dir/opengrep" | sha256sum -c -
+        else
+          echo "$expected  $dir/opengrep" | shasum -a 256 -c -
+        fi
         chmod +x "$dir/opengrep"
         "$dir/opengrep" --version
 

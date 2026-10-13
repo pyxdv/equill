@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import typer
@@ -187,8 +188,11 @@ def rules(
     typer.echo(f"{RULES_REPO}@{RULES_COMMIT[:12]} ({RULES_LICENSE})")
     typer.echo(f"cached at {root}")
     for folder in select(root, target):
-        n = sum(1 for p in folder.rglob("*") if p.suffix in (".yaml", ".yml"))
-        typer.echo(f"  {folder.relative_to(root).as_posix()}: {n} rules")
+        texts = [p.read_text(encoding="utf-8") for p in folder.rglob("*.y*ml")]
+        n = sum(len(re.findall(r"(?m)^\s*-\s*id\s*:", t)) for t in texts)
+        typer.echo(
+            f"  {folder.relative_to(root).as_posix()}: {n} rules in {len(texts)} files"
+        )
 
 
 @app.command()

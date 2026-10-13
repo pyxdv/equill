@@ -48,9 +48,9 @@ jobs:
 | input | default | meaning |
 |---|---|---|
 | `path` | `.` | directory to scan, relative to the workspace |
-| `scanner` | `opengrep` | `opengrep` or `semgrep` (both installed by the action), or `cppcheck` |
+| `scanner` | `opengrep` | `opengrep` (installed by the action on Linux and macOS runners), `semgrep` (installed by the action) or `cppcheck` |
 | `config` | `auto` | `auto` picks the open rules for the languages in the repository (Opengrep) or `p/default` (Semgrep); otherwise registry packs or rule paths, comma-separated |
-| `scanner-output` | | a Semgrep JSON, or (with `scanner: cppcheck`) a Cppcheck XML, your workflow already produced; mapped instead of scanning |
+| `scanner-output` | | a scan your workflow already produced, mapped instead of scanning: Semgrep JSON with `scanner: semgrep`, Opengrep JSON with the default, Cppcheck XML with `scanner: cppcheck` |
 | `fail-on` | | comma-separated characteristics, or `all`; fails on any actionable finding in them |
 | `max-actionable` | | fails above this many actionable findings (`0` = none allowed) |
 | `output-dir` | `equill-report` | where the artifacts go |
@@ -63,8 +63,9 @@ Outputs: `report`, `sarif`, `scores`, `summary` (paths); `findings`, `mapped`,
 `actionable`, `sites` (counts); `gate` (`passed` / `failed`). The step fails
 when the gate does, after the summary is on the job page.
 
-Already running Semgrep? Pass its JSON with `scanner-output: semgrep.json` and
-equill skips the second scan. For C/C++, set `scanner: cppcheck`; to map a
+Already running Semgrep? Pass its JSON with `scanner: semgrep` and
+`scanner-output: semgrep.json`, and equill skips the second scan (the
+`scanner` input is what report.json records as the source). For C/C++, set `scanner: cppcheck`; to map a
 report your workflow already produced, also pass `scanner-output: cppcheck.xml`
 (from `cppcheck --xml`).
 
@@ -81,13 +82,16 @@ with the Commons Clause: free to use and redistribute, not to sell.
   binary is checked against a pinned SHA-256. Run `equill rules` to fetch ahead
   of an offline scan and see what is selected.
 - **Curated.** Test fixtures and `audit` rules (written for manual security
-  audits, noisy by design) are left out: about 1,450 rules remain.
+  audits, noisy by design) are left out: about 1,500 rules in 1,451 files
+  remain.
 - **Selected by language.** Only the rule folders for the languages present in
   the scanned tree (by file extension), plus hard-coded-secret detection, are
   loaded, so a Python repository parses a few hundred rules, not all of them.
 - **Code in every finding.** Opengrep reports the flagged source line; an
   unauthenticated Semgrep writes `requires login` instead.
-- **Recorded.** `report.json` and the summary page name the rules a scan used.
+- **Recorded and stable.** `report.json` and the summary page name the rules a
+  scan used, and rule ids are the rules' own (`python.flask.security...`), the
+  same on every machine, so code-scanning alerts keep their identity.
 
 `scanner: semgrep` keeps the 1.0 behaviour: Semgrep with the `p/default`
 registry pack. Registry packs are under the

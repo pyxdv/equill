@@ -20,13 +20,14 @@ Three steps, each deterministic:
   loudly instead of scanning with fewer rules;
 * **select** picks the rule folders for the languages present in the target, by
   file extension. Opengrep parses every rule it is given before it scans, and
-  all 1,450 curated rules cost over a minute on a one-file repository; the
+  all ~1,500 curated rules cost over a minute on a one-file repository; the
   languages actually present cost seconds.
 """
 
 from __future__ import annotations
 
 import hashlib
+import http.client
 import io
 import os
 import re
@@ -50,14 +51,15 @@ _TEST_FILE = re.compile(r"\.test\.ya?ml$")
 _IS_RULE = re.compile(r"(?m)^rules:\s*$")
 
 # File extension (or exact file name) -> rule folders. ``ai/<lang>`` folders
-# hold rules about LLM API use in that language and ride along with it.
+# hold rules about LLM API use in that language and ride along with it. Most
+# of typescript/ (React security rules among them) also targets JavaScript.
 _LANGUAGE_DIRS: dict[str, tuple[str, ...]] = {
     ".py": ("python", "ai/python"),
     ".pyi": ("python",),
-    ".js": ("javascript",),
-    ".mjs": ("javascript",),
-    ".cjs": ("javascript",),
-    ".jsx": ("javascript",),
+    ".js": ("javascript", "typescript"),
+    ".mjs": ("javascript", "typescript"),
+    ".cjs": ("javascript", "typescript"),
+    ".jsx": ("javascript", "typescript"),
     ".ts": ("typescript", "javascript", "ai/typescript"),
     ".tsx": ("typescript", "javascript", "ai/typescript"),
     ".java": ("java",),
@@ -112,6 +114,12 @@ class RulesError(RuntimeError):
     pass
 
 
+_OFFLINE = (
+    "; run `equill rules` where the network is available, or pass --config with a "
+    "local rules folder to scan offline"
+)
+
+
 def cache_root() -> Path:
     """Where fetched rules live: $EQUILL_CACHE, else $XDG_CACHE_HOME/equill,
     else ~/.cache/equill."""
@@ -158,7 +166,8 @@ def curate(src: Path, dst: Path) -> int:
 def tree_digest(root: Path) -> str:
     """sha256 over every file's relative path and content, in sorted order."""
     h = hashlib.sha256()
-    for path in sorted(p for p in root.rglob("*") if p.is_file()):
+    files = (p for p in root.rglob("*") if p.is_file())
+    for path in sorted(files, key=lambda p: p.relative_to(root).parts):
         h.update(path.relative_to(root).as_posix().encode())
         h.update(b"\0")
         h.update(hashlib.sha256(path.read_bytes()).digest())
@@ -180,15 +189,19 @@ def _git_checkout(commit: str, dest: Path) -> Path | None:
     steps = (
         [git, "init", "-q", str(dest)],
         [git, "-C", str(dest), "fetch", "-q", "--depth", "1", url, commit],
-        [git, "-C", str(dest), "-c", "advice.detachedHead=false", "checkout", "-q", "FETCH_HEAD"],
+        [git, "-C", str(dest), "-c", "core.autocrlf=false", "-c", "core.eol=lf",
+         "-c", "advice.detachedHead=false", "checkout", "-q", "FETCH_HEAD"],
     )
     for argv in steps:
-        done = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=300,
-                              check=False)
+        try:
+            done = subprocess.run(argv, capture_output=True, text=True, env=env, timeout=300,
+                                  check=False)
+        except subprocess.TimeoutExpired as e:
+            raise RulesError(f"git timed out fetching {RULES_REPO}@{commit[:12]}{_OFFLINE}") from e
         if done.returncode != 0:
             raise RulesError(
                 f"git could not fetch {RULES_REPO}@{commit[:12]}: "
-                f"{(done.stderr or done.stdout).strip()[:500]}"
+                f"{(done.stderr or done.stdout).strip()[:500]}{_OFFLINE}"
             )
     head = subprocess.run([git, "-C", str(dest), "rev-parse", "HEAD"], capture_output=True,
                           text=True, check=False).stdout.strip()
@@ -240,13 +253,11 @@ def fetch(
         if checkout is None:
             url = f"https://codeload.github.com/{RULES_REPO}/tar.gz/{commit}"
             try:
-                tarball = download(url)
-            except OSError as e:
+                checkout = _extract(download(url), Path(tmp) / "src")
+            except (OSError, EOFError, tarfile.TarError, http.client.HTTPException) as e:
                 raise RulesError(
-                    f"could not download {RULES_REPO}@{commit[:12]} ({e}); pass --config "
-                    "with a local rules folder to scan offline"
+                    f"could not download {RULES_REPO}@{commit[:12]} ({e}){_OFFLINE}"
                 ) from e
-            checkout = _extract(tarball, Path(tmp) / "src")
         staged = Path(tmp) / "rules"
         staged.mkdir()
         if not curate(checkout, staged):
@@ -256,9 +267,13 @@ def fetch(
                 f"{RULES_REPO}@{commit[:12]} curated to an unexpected rule set "
                 f"(sha256 {got[:16]}…, expected {digest[:16]}…)"
             )
-        if rules.exists():
-            shutil.rmtree(rules)
-        staged.rename(rules)
+        # `rules` only ever appears through this rename, after verification, so
+        # a peer that won the race installed the same verified tree.
+        try:
+            staged.rename(rules)
+        except OSError:
+            if not rules.is_dir():
+                raise
     (root / "ok").write_text(commit + "\n", encoding="utf-8")
     return rules
 
@@ -266,18 +281,29 @@ def fetch(
 def detect_dirs(target: Path, max_files: int = 200_000) -> list[str]:
     """Rule folders for the languages present under ``target``, sorted."""
     dirs: set[str] = set(ALWAYS_DIRS)
+    target = Path(target)
+    walk = (
+        [(str(target.parent), [], [target.name])] if target.is_file() else os.walk(target)
+    )
     seen = 0
-    for _root, subdirs, files in os.walk(target):
+    for _root, subdirs, files in walk:
         subdirs[:] = [d for d in subdirs if d not in _IGNORE_DIRS]
         for name in files:
             seen += 1
-            key = name if name in _LANGUAGE_DIRS else os.path.splitext(name)[1].lower()
-            if key == "dockerfile" or name.startswith("Dockerfile"):
-                key = "Dockerfile"
-            dirs.update(_LANGUAGE_DIRS.get(key, ()))
+            dirs.update(_LANGUAGE_DIRS.get(_language_key(name), ()))
         if seen >= max_files:
             break
     return sorted(dirs)
+
+
+def _language_key(name: str) -> str:
+    """The _LANGUAGE_DIRS key for a file name: Dockerfile variants
+    (Dockerfile, dockerfile, Dockerfile.prod, prod.dockerfile) or the
+    lower-cased extension."""
+    ext = os.path.splitext(name)[1].lower()
+    if name.lower().startswith("dockerfile") or ext == ".dockerfile":
+        return "Dockerfile"
+    return ext
 
 
 def select(rules: Path, target: Path) -> list[Path]:
@@ -285,12 +311,6 @@ def select(rules: Path, target: Path) -> list[Path]:
     return [rules / d for d in detect_dirs(target) if (rules / d).is_dir()]
 
 
-def resolve_auto(target: Path, scanner: str, cache: Path | None = None) -> list[str]:
-    """What ``--config auto`` means for a scanner: the selected open rules for
-    Opengrep, Semgrep's own ``p/default`` registry pack for Semgrep."""
-    if scanner == "semgrep":
-        return ["p/default"]
-    return [str(p) for p in select(fetch(cache), target)]
 
 
 __all__ = [
@@ -304,7 +324,6 @@ __all__ = [
     "curate",
     "detect_dirs",
     "fetch",
-    "resolve_auto",
     "select",
     "tree_digest",
 ]
