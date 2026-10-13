@@ -1,0 +1,11 @@
+{
+  "artifact": "sarif-2.1.0.schema.json",
+  "what": "Official SARIF 2.1.0 JSON Schema (OASIS standard), used to validate quill's SARIF export.",
+  "source_url": "https://www.schemastore.org/sarif-2.1.0.json",
+  "note": "https://json.schemastore.org/sarif-2.1.0.json (the $schema URL quill emits) 301-redirects here.",
+  "retrieved": "2026-07-27T10:08:52Z",
+  "bytes": 111720,
+  "sha256": "7c9688f0a1c4a4e1649ecc78521087e664729c1dff56ee8212ff195c7b16132a",
+  "json_schema_draft": "http://json-schema.org/draft-07/schema#",
+  "why_vendored": "Integration with existing static-analysis tooling is not demonstrated by the export itself. Vendoring the schema makes the demonstrable part - that the export is schema-valid SARIF 2.1.0 - checkable offline and in CI, without a network fetch that could silently change."
+}

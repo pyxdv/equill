@@ -1,0 +1,47 @@
+{
+  "results": [
+    {
+      "check_id": "js.xss",
+      "path": "src/index.js",
+      "start": {
+        "line": 42
+      },
+      "end": {
+        "line": 42
+      },
+      "extra": {
+        "severity": "WARNING",
+        "message": "Possible XSS",
+        "lines": "res.send(x)",
+        "metadata": {
+          "owasp": [
+            "A03:2021"
+          ],
+          "cwe": [
+            "CWE-79"
+          ]
+        }
+      }
+    },
+    {
+      "check_id": "js.redirect",
+      "path": "src/r.js",
+      "start": {
+        "line": 3
+      },
+      "end": {
+        "line": 3
+      },
+      "extra": {
+        "severity": "INFO",
+        "message": "open redirect",
+        "lines": "res.redirect(u)",
+        "metadata": {
+          "cwe": [
+            "CWE-601"
+          ]
+        }
+      }
+    }
+  ]
+}

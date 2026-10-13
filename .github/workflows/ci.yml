@@ -1,0 +1,91 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check src tests
+      - name: Shell scripts
+        run: |
+          bash -n scripts/equill_action.sh
+          shellcheck scripts/equill_action.sh
+      - name: Test
+        run: python -m pytest -rs
+
+  action:
+    # Runs action.yml the way a user's workflow does (`uses: ./`). The pytest
+    # suite drives scripts/equill_action.sh with recorded input; this is where
+    # the composite steps themselves run on a real runner.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: self
+        uses: ./
+        with:
+          path: src
+          config: p/python
+      - name: Check the self-scan outputs
+        env:
+          SARIF: ${{ steps.self.outputs.sarif }}
+          SUMMARY: ${{ steps.self.outputs.summary }}
+          FINDINGS: ${{ steps.self.outputs.findings }}
+          ACTIONABLE: ${{ steps.self.outputs.actionable }}
+          GATE: ${{ steps.self.outputs.gate }}
+        run: |
+          set -euo pipefail
+          echo "findings=$FINDINGS actionable=$ACTIONABLE gate=$GATE"
+          test "$GATE" = passed
+          [[ "$FINDINGS" =~ ^[0-9]+$ && "$ACTIONABLE" =~ ^[0-9]+$ ]]
+          grep -q '^## equill' "$SUMMARY"
+          python3 -c 'import json, sys; assert json.load(open(sys.argv[1]))["version"] == "2.1.0"' "$SARIF"
+      # The self-scan maps nothing (equill's source has no p/python finding),
+      # so the gate is exercised on a recorded scan with one security finding,
+      # shared with tests/test_action.py. The step must fail, after publishing.
+      - id: gate
+        uses: ./
+        continue-on-error: true
+        with:
+          scanner-output: tests/data/action_semgrep.json
+          fail-on: security
+          output-dir: equill-gate
+      - name: Check the gate failed the step, after publishing
+        env:
+          OUTCOME: ${{ steps.gate.outcome }}
+          GATE: ${{ steps.gate.outputs.gate }}
+          ACTIONABLE: ${{ steps.gate.outputs.actionable }}
+        run: |
+          set -euo pipefail
+          echo "outcome=$OUTCOME gate=$GATE actionable=$ACTIONABLE"
+          test "$OUTCOME" = failure
+          test "$GATE" = failed
+          grep -q 'Quality gate: failed' equill-gate/summary.md
+          grep -q '"iso_char": "security"' equill-gate/report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: equill-self-report
+          path: equill-report/
+          retention-days: 7

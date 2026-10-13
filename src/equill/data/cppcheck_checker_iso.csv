@@ -1,0 +1,45 @@
+checker_id,cppcheck_severity,cwe,iso_char,iso_sub,alt_label,alt_when,class_prior,prior_source,rationale
+variableScope,style,398,maintainability,analysability,,,NOISE,5.1b,A narrower scope makes the variable's use easier to follow; behaviour does not change.
+cstyleCast,style,398,maintainability,analysability,,,NOISE,5.1b,A C-style cast hides which conversion is meant; behaviour does not change.
+constVariablePointer,style,398,maintainability,modifiability,,,NOISE,5.1b,Declaring the pointee const turns an unintended later write into a compile error.
+constParameterPointer,style,398,maintainability,modifiability,,,NOISE,5.1b,Declaring the pointee const turns an unintended later write into a compile error.
+constParameterReference,style,398,maintainability,modifiability,,,QUALITY,spot,"All 9 are copy/assign/compare signatures taking a non-const reference (operator=(T&) on six SensorNetAddress copies; T(T&); operator==(T&)): they reject const and temporary arguments, a fix a maintainer would take."
+constParameter,style,398,maintainability,modifiability,,,NOISE,spot,"All 6 read: argv of main and command handlers, and a tinymt32 key array; const adds nothing a reader needs."
+constParameterCallback,style,398,maintainability,modifiability,,,NOISE,spot,"All 5 read: qsort-style comparators whose signature the callback type fixes, as Cppcheck itself notes."
+constVariable,style,398,maintainability,modifiability,,,NOISE,spot,The one instance is a local threshold table in a CLI utility.
+missingOverride,style,,maintainability,modifiability,,,NOISE,spot,"All 5 read: initialize/run in the Process hierarchy, already virtual in the base; override would only document it."
+noExplicitConstructor,style,398,maintainability,analysability,,,NOISE,spot,"All 28 read: handler, task and synchronisation classes built from one pointer or count; no implicit conversion is used anywhere."
+shadowArgument,style,398,maintainability,analysability,,,NOISE,spot,"All 4 read: a block-local CONNACK packet named like the incoming packet parameter, in blocks that return without using the parameter again."
+shadowFunction,style,398,maintainability,analysability,,,NOISE,spot,The one instance is a local in a self-test function.
+shadowVariable,style,398,maintainability,analysability,,,NOISE,spot,The one instance re-reads the same socket into an inner variable of the same name and value.
+multiCondition,style,398,maintainability,analysability,,,NOISE,spot,"Both read: an if inside the else of its own negation in the mosquitto pub/sub clients; redundant, not wrong."
+duplicateExpression,style,398,maintainability,analysability,reliability/maturity,the duplicate replaced a different check that is now missing,QUALITY,spot,"All 3 are one vendored parson line (value == NULL twice, object never checked); whether callers tolerate a NULL object was not verified."
+clarifyCondition,style,398,maintainability,analysability,functional_suitability/functional_correctness,operator precedence differs from what was meant,QUALITY,spot,"The one instance is acl_parse.c:110 '!data| !topic': a typo for ||, same result on booleans."
+unreadVariable,style,563,maintainability,analysability,functional_suitability/functional_correctness,the discarded value was meant to be used,NOISE,5.1b,A value assigned and never read is dead code.
+unusedVariable,style,563,maintainability,analysability,,,NOISE,5.1b,An unused variable is dead code.
+unusedStructMember,style,563,maintainability,analysability,,,NOISE,5.1b,"Dead field; often used only under a build configuration Cppcheck did not see (e.g. WITH_TLS)."
+redundantAssignment,style,563,maintainability,analysability,functional_suitability/functional_correctness,the overwritten value was meant to be used,NOISE,5.1b,A value overwritten before it is read is dead code.
+redundantInitialization,style,563,maintainability,analysability,,,NOISE,5.1b,An initialiser overwritten before it is read is dead code.
+knownConditionTrueFalse,style,571,maintainability,analysability,functional_suitability/functional_correctness,the branch was meant to be reachable,NOISE,5.1b,A condition fixed at compile time is usually a defensive or redundant check.
+badBitmaskCheck,style,571,maintainability,analysability,,,NOISE,5.1b,OR-ing a flag constant that is zero by design is redundant.
+unsignedLessThanZero,style,570,maintainability,analysability,reliability/maturity,an error return such as -1 is stored in the unsigned variable,NOISE,spot,"5 checked: '<= 0' on an unsigned value still catches 0, so the check works."
+unsignedPositive,style,570,maintainability,analysability,,,NOISE,spot,Both read: a range test whose lower bound is 0 on an unsigned byte.
+incorrectLogicOperator,warning,570,functional_suitability,functional_correctness,,,BUG,spot,"SensorNetwork.cpp:111 '_channel < 0 && _channel > 30' is never true, so the range check never fires."
+uselessAssignmentPtrArg,warning,398,maintainability,analysability,functional_suitability/functional_correctness,the caller's pointer was meant to change,NOISE,spot,handle_publish.c:140 sets a by-value parameter to NULL after freeing it; defensive and harmless.
+duplInheritedMember,warning,398,maintainability,analysability,functional_suitability/functional_correctness,a caller expects dynamic dispatch to the derived member,QUALITY,spot,"All 20 read. No caller reaches the hidden members through a base pointer except one: theProcess is a Process* to the Gateway, so SensorNetwork code calling theProcess->getParam runs Process::getParam without the mutex MultiTaskProcess::getParam adds. Adapter::isActive reads a _isActive nothing sets (the subclasses redeclare it), so it is dead and would always return false."
+invalidPrintfArgType_sint,warning,686,functional_suitability,functional_correctness,,,NOISE,5.1b,A sign mismatch prints a wrong value only outside the shared range of the two types.
+invalidPrintfArgType_uint,warning,686,functional_suitability,functional_correctness,,,NOISE,5.1b,A sign mismatch prints a wrong value only outside the shared range of the two types.
+uninitMemberVar,warning,398,reliability,maturity,,,NOISE,spot,"All 16 read: every member is written before it is read (initialize(), out-parameters, vsprintf/inet_ntop targets). One exception by API order: GatewayTester LMqttsnClient::sleep() passes _sleepDuration, unset unless setSleepDuration() ran first. 10 of the 16 are in GatewayTester, a test client the path filter missed."
+noCopyConstructor,warning,398,maintainability,modifiability,reliability/maturity,an instance is actually copied,QUALITY,spot,"12 classes in paho, all long-lived owners (Gateway, ClientList, RingBuffer, ...): the double free is latent until a later change copies one. Whether any is copied today was not checked."
+noOperatorEq,warning,398,maintainability,modifiability,reliability/maturity,an instance is actually assigned,QUALITY,spot,"Same 12 classes as noCopyConstructor; latent until a later change assigns one."
+truncLongCastAssignment,style,197,reliability,maturity,,,QUALITY,spot,"loop.c:294,296: the int product overflows before it is widened to long, so a long reconnect backoff can go wrong."
+nullPointerRedundantCheck,warning,476,reliability,maturity,,,BUG,5.1b,Dereference before the null check; one unchecked malloc in LGwProxy.cpp gives all 7.
+nullPointerArithmeticRedundantCheck,warning,682,reliability,maturity,,,BUG,5.1b,Same unchecked malloc in LGwProxy.cpp as nullPointerRedundantCheck.
+memleak,error,401,reliability,maturity,performance_efficiency/resource_utilization,the leaking path runs repeatedly,BUG,5.1b,Raters placed the one-shot error-path leaks under maturity (5.1b).
+invalidscanf,warning,119,reliability,maturity,security/integrity,the input crosses a trust boundary,BUG,5.1b,Raters placed the operator-CLI overflows under reliability: no trust boundary (5.1b).
+integerOverflowCond,warning,190,reliability,maturity,,,GATE,5.1b,The one instance was judged false in 5.1b.
+uninitvar,error,457,reliability,maturity,,,GATE,5.1b,0 of 12 true in 5.1b: uthash/utlist iteration macros and SPI ioctl-filled buffers.
+unassignedVariable,style,665,reliability,maturity,,,GATE,spot,All 3 are receive buffers filled by an SPI ioctl through a struct pointer; the same false pattern as uninitvar.
+shiftNegativeLHS,portability,758,portability,adaptability,,,NOISE,spot,"All 4 read: '>>' on a negative int32 coordinate, masked to one byte. Right-shifting a negative value is implementation-defined in C, not undefined as the message says, and the masked byte is the same under arithmetic or logical shift."
+useInitializationList,performance,398,performance_efficiency,time_behaviour,,,NOISE,spot,All 6 read: one-off constructor assignments of strings and integers; for the integers there is no cost to save.
+stlIfStrFind,performance,597,performance_efficiency,time_behaviour,,,GATE,spot,"Claim false: LScreen.cpp:92 tests find(""\n"") > 0, a search for an inner newline, not a prefix test that starts_with could replace."

@@ -1,0 +1,130 @@
+name: equill ISO/IEC 25010 quality evidence
+description: >-
+  Map Semgrep, Opengrep or Cppcheck findings to ISO/IEC 25010 quality
+  characteristics; write SARIF and a job summary; optionally gate the build.
+  Deterministic, no LLM or GPU, seconds on a stock runner.
+author: pyxdv
+branding:
+  icon: check-square
+  color: blue
+
+inputs:
+  path:
+    description: Directory to scan, relative to the workspace.
+    default: .
+  scanner:
+    description: semgrep | opengrep | cppcheck. Opengrep must already be on PATH.
+    default: semgrep
+  config:
+    description: Semgrep/Opengrep --config (a registry pack such as p/default or p/python, or a rules path).
+    default: p/default
+  scanner-output:
+    description: >-
+      A Semgrep JSON, or (with scanner cppcheck) a Cppcheck XML, your workflow
+      already produced. When set, equill maps it instead of running (or
+      installing) a scanner.
+    default: ''
+  fail-on:
+    description: >-
+      Comma-separated characteristics (e.g. security,reliability, or all). The
+      step fails when any of them has an actionable finding. Empty means never.
+    default: ''
+  max-actionable:
+    description: 'Fail when the scan has more actionable findings than this. Empty: no limit.'
+    default: ''
+  output-dir:
+    description: Where report.json, report.sarif, scores.json and summary.md are written.
+    default: equill-report
+  semgrep-version:
+    description: 'Semgrep version to install (e.g. 1.95.0). Empty installs the latest.'
+    default: ''
+  python-version:
+    description: Python used to run equill and Semgrep.
+    default: '3.12'
+
+outputs:
+  report:
+    description: Path to report.json.
+    value: ${{ steps.run.outputs.report }}
+  sarif:
+    description: Path to report.sarif (SARIF 2.1.0, for github/codeql-action/upload-sarif).
+    value: ${{ steps.run.outputs.sarif }}
+  scores:
+    description: Path to scores.json.
+    value: ${{ steps.run.outputs.scores }}
+  summary:
+    description: Path to summary.md (also appended to the job summary).
+    value: ${{ steps.run.outputs.summary }}
+  findings:
+    description: Number of scanner findings.
+    value: ${{ steps.run.outputs.findings }}
+  mapped:
+    description: Findings mapped to ISO/IEC 25010.
+    value: ${{ steps.run.outputs.mapped }}
+  actionable:
+    description: Actionable mapped findings (what the gate counts).
+    value: ${{ steps.run.outputs.actionable }}
+  sites:
+    description: Distinct places to fix among the actionable findings.
+    value: ${{ steps.run.outputs.sites }}
+  gate:
+    description: passed or failed.
+    value: ${{ steps.run.outputs.gate }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      id: python
+      with:
+        python-version: ${{ inputs.python-version }}
+        # Keep the caller's Python: only this action's steps use this one,
+        # through steps.python.outputs.python-path.
+        update-environment: false
+
+    - name: Install equill
+      shell: bash
+      env:
+        PY: ${{ steps.python.outputs.python-path }}
+      run: |
+        "$PY" -m venv "$RUNNER_TEMP/equill-venv"
+        "$RUNNER_TEMP/equill-venv/bin/python" -m pip install --quiet --upgrade pip
+        "$RUNNER_TEMP/equill-venv/bin/python" -m pip install --quiet "$GITHUB_ACTION_PATH"
+
+    - name: Install Semgrep
+      if: inputs.scanner == 'semgrep' && inputs.scanner-output == ''
+      shell: bash
+      env:
+        PY: ${{ steps.python.outputs.python-path }}
+        SEMGREP_VERSION: ${{ inputs.semgrep-version }}
+      # Its own venv: Semgrep pins click and friends, and must not move equill's.
+      # Not added to GITHUB_PATH, which would put this venv's python and pip
+      # ahead of the caller's for the rest of their job; the scan step below
+      # puts it on PATH for itself only.
+      run: |
+        "$PY" -m venv "$RUNNER_TEMP/semgrep-venv"
+        "$RUNNER_TEMP/semgrep-venv/bin/python" -m pip install --quiet \
+          "semgrep${SEMGREP_VERSION:+==$SEMGREP_VERSION}"
+
+    - name: Install Cppcheck
+      if: inputs.scanner == 'cppcheck' && inputs.scanner-output == ''
+      shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq cppcheck
+
+    - name: Scan, map and summarise
+      id: run
+      shell: bash
+      env:
+        EQUILL_BIN: ${{ runner.temp }}/equill-venv/bin/equill
+        EQUILL_PYTHON: ${{ runner.temp }}/equill-venv/bin/python
+        EQUILL_PATH: ${{ inputs.path }}
+        EQUILL_SCANNER: ${{ inputs.scanner }}
+        EQUILL_CONFIG: ${{ inputs.config }}
+        EQUILL_SCANNER_OUTPUT: ${{ inputs.scanner-output }}
+        EQUILL_OUTPUT_DIR: ${{ inputs.output-dir }}
+        EQUILL_FAIL_ON: ${{ inputs.fail-on }}
+        EQUILL_MAX_ACTIONABLE: ${{ inputs.max-actionable }}
+        EQUILL_NAME: ${{ github.event.repository.name }}
+      run: PATH="$RUNNER_TEMP/semgrep-venv/bin:$PATH" bash "$GITHUB_ACTION_PATH/scripts/equill_action.sh"
