@@ -1,8 +1,8 @@
 name: equill ISO/IEC 25010 quality evidence
 description: >-
-  Map Semgrep, Opengrep or Cppcheck findings to ISO/IEC 25010 quality
+  Map Opengrep, Semgrep or Cppcheck findings to ISO/IEC 25010 quality
   characteristics; write SARIF and a job summary; optionally gate the build.
-  Deterministic, no LLM or GPU, seconds on a stock runner.
+  Open rules by default, deterministic, no LLM, GPU or login.
 author: pyxdv
 branding:
   icon: check-square
@@ -13,11 +13,14 @@ inputs:
     description: Directory to scan, relative to the workspace.
     default: .
   scanner:
-    description: semgrep | opengrep | cppcheck. Opengrep must already be on PATH.
-    default: semgrep
+    description: opengrep (default, installed by the action) | semgrep (installed by the action) | cppcheck.
+    default: opengrep
   config:
-    description: Semgrep/Opengrep --config (a registry pack such as p/default or p/python, or a rules path).
-    default: p/default
+    description: >-
+      auto (default) uses the open opengrep-rules (LGPL-2.1 + Commons Clause)
+      for the languages in the repository with Opengrep, and p/default with
+      Semgrep. Otherwise registry packs or rule paths, comma-separated.
+    default: auto
   scanner-output:
     description: >-
       A Semgrep JSON, or (with scanner cppcheck) a Cppcheck XML, your workflow
@@ -35,8 +38,16 @@ inputs:
   output-dir:
     description: Where report.json, report.sarif, scores.json and summary.md are written.
     default: equill-report
+  opengrep-version:
+    description: Opengrep release to install. The default is pinned and checksum-verified.
+    default: v1.30.2
+  opengrep-sha256:
+    description: >-
+      SHA-256 of the Opengrep binary for this runner, required when
+      opengrep-version is not the pinned default.
+    default: ''
   semgrep-version:
-    description: 'Semgrep version to install (e.g. 1.95.0). Empty installs the latest.'
+    description: 'Semgrep version to install when scanner is semgrep (e.g. 1.95.0). Empty installs the latest.'
     default: ''
   python-version:
     description: Python used to run equill and Semgrep.
@@ -91,6 +102,42 @@ runs:
         "$RUNNER_TEMP/equill-venv/bin/python" -m pip install --quiet --upgrade pip
         "$RUNNER_TEMP/equill-venv/bin/python" -m pip install --quiet "$GITHUB_ACTION_PATH"
 
+    - name: Install Opengrep
+      if: inputs.scanner == 'opengrep' && inputs.scanner-output == ''
+      shell: bash
+      env:
+        OPENGREP_VERSION: ${{ inputs.opengrep-version }}
+        OPENGREP_SHA256: ${{ inputs.opengrep-sha256 }}
+      # The single static binary from Opengrep's GitHub release, checked against
+      # a pinned SHA-256. Kept in its own directory and put on PATH for the
+      # scan step only, like Semgrep below.
+      run: |
+        set -euo pipefail
+        case "$(uname -m)" in
+          x86_64|amd64) asset=opengrep_manylinux_x86
+            pinned=a66aa3278457f02b287b985a45b6762aebcaba5000f2689245fd1ed86d1456c7 ;;
+          aarch64|arm64) asset=opengrep_manylinux_aarch64
+            pinned=90acea5df4b733083f388d4feeb250ca802f671b33d1f222653d1e571dd2b0d8 ;;
+          *) echo "::error::equill installs Opengrep on Linux x86_64/aarch64 only; got $(uname -m)"; exit 1 ;;
+        esac
+        if [ "$RUNNER_OS" != "Linux" ]; then
+          echo "::error::equill installs Opengrep on Linux runners only; use scanner: semgrep or scanner-output"; exit 1
+        fi
+        expected="$OPENGREP_SHA256"
+        if [ -z "$expected" ]; then
+          if [ "$OPENGREP_VERSION" != "v1.30.2" ]; then
+            echo "::error::opengrep-version $OPENGREP_VERSION needs opengrep-sha256 (only v1.30.2 is pinned)"; exit 1
+          fi
+          expected="$pinned"
+        fi
+        dir="$RUNNER_TEMP/opengrep-bin"
+        mkdir -p "$dir"
+        curl -fsSL --retry 3 -o "$dir/opengrep" \
+          "https://github.com/opengrep/opengrep/releases/download/$OPENGREP_VERSION/$asset"
+        echo "$expected  $dir/opengrep" | sha256sum -c -
+        chmod +x "$dir/opengrep"
+        "$dir/opengrep" --version
+
     - name: Install Semgrep
       if: inputs.scanner == 'semgrep' && inputs.scanner-output == ''
       shell: bash
@@ -127,4 +174,4 @@ runs:
         EQUILL_FAIL_ON: ${{ inputs.fail-on }}
         EQUILL_MAX_ACTIONABLE: ${{ inputs.max-actionable }}
         EQUILL_NAME: ${{ github.event.repository.name }}
-      run: PATH="$RUNNER_TEMP/semgrep-venv/bin:$PATH" bash "$GITHUB_ACTION_PATH/scripts/equill_action.sh"
+      run: PATH="$RUNNER_TEMP/opengrep-bin:$RUNNER_TEMP/semgrep-venv/bin:$PATH" bash "$GITHUB_ACTION_PATH/scripts/equill_action.sh"

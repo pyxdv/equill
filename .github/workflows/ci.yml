@@ -37,9 +37,10 @@ jobs:
         run: python -m pytest -rs
 
   action:
-    # Runs action.yml the way a user's workflow does (`uses: ./`). The pytest
-    # suite drives scripts/equill_action.sh with recorded input; this is where
-    # the composite steps themselves run on a real runner.
+    # Runs action.yml the way a user's workflow does (`uses: ./`), with its
+    # defaults: Opengrep installed by the action and the open opengrep-rules.
+    # The pytest suite drives scripts/equill_action.sh with recorded input;
+    # this is where the composite steps themselves run on a real runner.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -47,7 +48,6 @@ jobs:
         uses: ./
         with:
           path: src
-          config: p/python
       - name: Check the self-scan outputs
         env:
           SARIF: ${{ steps.self.outputs.sarif }}
@@ -62,13 +62,44 @@ jobs:
           [[ "$FINDINGS" =~ ^[0-9]+$ && "$ACTIONABLE" =~ ^[0-9]+$ ]]
           grep -q '^## equill' "$SUMMARY"
           python3 -c 'import json, sys; assert json.load(open(sys.argv[1]))["version"] == "2.1.0"' "$SARIF"
-      # The self-scan maps nothing (equill's source has no p/python finding),
-      # so the gate is exercised on a recorded scan with one security finding,
-      # shared with tests/test_action.py. The step must fail, after publishing.
+      # The default scanner and rules (Opengrep + opengrep-rules) on a small,
+      # deliberately vulnerable app: findings must be mapped, carry the flagged
+      # code rather than a login placeholder, and trip the security gate.
+      - id: sample
+        uses: ./
+        continue-on-error: true
+        with:
+          path: sample/vulnerable_app
+          fail-on: security
+          output-dir: equill-sample
+      - name: Check the sample scan
+        env:
+          OUTCOME: ${{ steps.sample.outcome }}
+          GATE: ${{ steps.sample.outputs.gate }}
+          MAPPED: ${{ steps.sample.outputs.mapped }}
+        run: |
+          set -euo pipefail
+          echo "outcome=$OUTCOME gate=$GATE mapped=$MAPPED"
+          test "$OUTCOME" = failure
+          test "$GATE" = failed
+          test "$MAPPED" -ge 3
+          python3 - <<'PY'
+          import json
+          r = json.load(open("equill-sample/report.json"))
+          assert r["scanner"] == "opengrep", r["scanner"]
+          assert r["rules"].startswith("opengrep/opengrep-rules@"), r["rules"]
+          snippets = [f["snippet"] for f in r["findings"]]
+          assert snippets and all(s.strip() and s.strip() != "requires login" for s in snippets), snippets
+          assert any("shell=True" in s for s in snippets), snippets
+          print(r["rules"]); print(len(r["findings"]), "findings,", len(r["mappings"]), "mapped")
+          PY
+      # The gate on a recorded Semgrep scan with one security finding, shared
+      # with tests/test_action.py. The step must fail, after publishing.
       - id: gate
         uses: ./
         continue-on-error: true
         with:
+          scanner: semgrep
           scanner-output: tests/data/action_semgrep.json
           fail-on: security
           output-dir: equill-gate

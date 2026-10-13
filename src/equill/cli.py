@@ -24,11 +24,16 @@ def scan(
     target: Path = typer.Argument(Path("."), help="Directory to scan"),
     output: Path = typer.Option(Path("equill-report"), "--output", "-o", help="Output dir"),
     scanner: str = typer.Option(
-        "semgrep", "--scanner", envvar="EQUILL_SCANNER",
-        help="semgrep | opengrep | cppcheck (the CLI must be on PATH)",
+        "opengrep", "--scanner", envvar="EQUILL_SCANNER",
+        help="opengrep (default) | semgrep | cppcheck (the CLI must be on PATH)",
     ),
     semgrep_config: str = typer.Option(
-        "p/default", "--config", help="Semgrep/Opengrep --config (registry pack or rules path)"
+        "auto", "--config",
+        help=(
+            "auto (default): the open opengrep-rules for the languages present with "
+            "Opengrep, p/default with Semgrep. Otherwise registry packs or rule paths, "
+            "comma-separated."
+        ),
     ),
     scanner_output: Path | None = typer.Option(
         None, "--scanner-output",
@@ -55,7 +60,9 @@ def scan(
 ) -> None:
     """Scan, map every finding to ISO/IEC 25010, write report.json, report.sarif, scores.json."""
     from equill.pipeline import PipelineConfig, run_pipeline, write_report
+    from equill.rules import RulesError
     from equill.sarif import write_sarif
+    from equill.scan import SemgrepError
     from equill.schema import SCANNERS
     from equill.score import write_scores
 
@@ -75,7 +82,7 @@ def scan(
     )
     try:
         report = run_pipeline(config)
-    except (ValueError, OSError) as e:
+    except (ValueError, OSError, RulesError, SemgrepError) as e:
         typer.echo(f"error: {e}", err=True)
         raise typer.Exit(code=2) from e
     typer.echo(
@@ -153,6 +160,35 @@ def sarif(
 
     out = output or report_json.with_name("report.sarif")
     typer.echo(f"wrote {write_sarif(_load(report_json), out)}")
+
+
+@app.command()
+def rules(
+    target: Path = typer.Argument(Path("."), help="Directory whose languages pick the rules"),
+) -> None:
+    """Fetch the pinned opengrep-rules into the cache and show what `auto` selects.
+
+    Run it once ahead of an offline scan; `equill scan` then needs no network.
+    """
+    from equill.rules import (
+        RULES_COMMIT,
+        RULES_LICENSE,
+        RULES_REPO,
+        RulesError,
+        fetch,
+        select,
+    )
+
+    try:
+        root = fetch()
+    except RulesError as e:
+        typer.echo(f"error: {e}", err=True)
+        raise typer.Exit(code=2) from e
+    typer.echo(f"{RULES_REPO}@{RULES_COMMIT[:12]} ({RULES_LICENSE})")
+    typer.echo(f"cached at {root}")
+    for folder in select(root, target):
+        n = sum(1 for p in folder.rglob("*") if p.suffix in (".yaml", ".yml"))
+        typer.echo(f"  {folder.relative_to(root).as_posix()}: {n} rules")
 
 
 @app.command()

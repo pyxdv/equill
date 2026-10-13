@@ -138,7 +138,7 @@ def test_action_yml_wires_every_input_and_output():
 
     env_values = " ".join(str(v) for v in run_step["env"].values())
     used = set(re.findall(r"inputs\.([a-z-]+)", env_values))
-    install_only = {"semgrep-version", "python-version"}
+    install_only = {"semgrep-version", "python-version", "opengrep-version", "opengrep-sha256"}
     assert used | install_only == set(action["inputs"])
 
     script = SCRIPT.read_text(encoding="utf-8")

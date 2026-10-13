@@ -18,6 +18,7 @@ from equill.cppcheck import (
 from equill.mapper import CheckerLookupMapper, LookupMapper, MappingSummary
 from equill.normalize import normalize_semgrep_output
 from equill.reference import DEFAULT_REFERENCE_CSV, load_reference_table
+from equill.rules import RULES_COMMIT, RULES_REPO, resolve_auto
 from equill.scan import CommandRunner, SubprocessRunner, run_semgrep
 from equill.schema import Mapping, Report, Scanner
 
@@ -25,10 +26,13 @@ from equill.schema import Mapping, Report, Scanner
 @dataclass(frozen=True)
 class PipelineConfig:
     repo_path: Path
-    semgrep_config: str = "p/default"
+    # "auto": the open opengrep-rules for the languages present (Opengrep), or
+    # Semgrep's p/default registry pack (Semgrep). Anything else is passed to
+    # the scanner as --config, comma-separated values as several.
+    semgrep_config: str = "auto"
     name: str = ""
     commit_sha: str = ""
-    scanner: Scanner = "semgrep"
+    scanner: Scanner = "opengrep"
     # A recorded Semgrep JSON or Cppcheck XML to map instead of running the
     # scanner; None runs it.
     scanner_output: Path | None = None
@@ -53,6 +57,24 @@ def detect_commit_sha(repo_path: Path) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def resolve_config(config: PipelineConfig) -> tuple[list[str], str]:
+    """The --config values for a Semgrep-family scan, and their provenance."""
+    if config.semgrep_config != "auto":
+        configs = [c.strip() for c in config.semgrep_config.split(",") if c.strip()]
+        return configs, ", ".join(configs)
+    if config.scanner == "semgrep":
+        return ["p/default"], "p/default"
+    paths = resolve_auto(config.repo_path, config.scanner)
+    folders = ", ".join(Path(p).relative_to(Path(p).parents[_depth(p)]).as_posix() for p in paths)
+    return paths, f"{RULES_REPO}@{RULES_COMMIT[:12]} ({folders})"
+
+
+def _depth(path: str) -> int:
+    """How many levels below the curated ``rules`` folder ``path`` sits, minus one."""
+    parts = Path(path).parts
+    return len(parts) - parts.index("rules") - 2
+
+
 def run_pipeline(config: PipelineConfig, runner: CommandRunner | None = None) -> Report:
     runner = runner or SubprocessRunner()
     cppcheck = config.scanner == "cppcheck"
@@ -60,6 +82,7 @@ def run_pipeline(config: PipelineConfig, runner: CommandRunner | None = None) ->
     if cppcheck and config.cppcheck_exclude_tests:
         exclude_pattern = config.path_exclude or DEFAULT_PATH_EXCLUDE
 
+    rules_used: str | None = None
     if config.scanner_output is not None:
         text = Path(config.scanner_output).read_text(encoding="utf-8")
         if not cppcheck and text.lstrip().startswith("<"):
@@ -70,8 +93,9 @@ def run_pipeline(config: PipelineConfig, runner: CommandRunner | None = None) ->
     elif cppcheck:
         raw = run_cppcheck(repo_path=config.repo_path, runner=runner)
     else:
+        configs, rules_used = resolve_config(config)
         raw = run_semgrep(
-            repo_path=config.repo_path, config=config.semgrep_config,
+            repo_path=config.repo_path, config=configs,
             runner=runner, scanner=config.scanner,
         )
 
@@ -103,6 +127,7 @@ def run_pipeline(config: PipelineConfig, runner: CommandRunner | None = None) ->
         snippet_fallback=config.snippet_fallback,
         scanner=config.scanner,
         path_exclude=exclude_pattern,
+        rules=rules_used,
     )
 
 
@@ -113,4 +138,10 @@ def write_report(report: Report, output_dir: Path) -> Path:
     return path
 
 
-__all__ = ["PipelineConfig", "detect_commit_sha", "run_pipeline", "write_report"]
+__all__ = [
+    "PipelineConfig",
+    "detect_commit_sha",
+    "resolve_config",
+    "run_pipeline",
+    "write_report",
+]

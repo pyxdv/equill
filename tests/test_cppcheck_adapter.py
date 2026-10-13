@@ -390,7 +390,8 @@ def test_pipeline_semgrep_reads_recorded_json(tmp_path):
     out = tmp_path / "semgrep.json"
     out.write_text(json.dumps(payload), encoding="utf-8")
     runner = FakeRunner(SubprocessResult(returncode=0, stdout="{}", stderr=""))
-    config = PipelineConfig(repo_path=tmp_path, scanner_output=out, name="b", commit_sha="c")
+    config = PipelineConfig(repo_path=tmp_path, scanner="semgrep", scanner_output=out,
+                            name="b", commit_sha="c")
     report = run_pipeline(config, runner)
     assert runner.calls == []
     assert report.scanner == "semgrep"
