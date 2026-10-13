@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -49,17 +49,23 @@ class SubprocessRunner:
 
 
 def build_semgrep_command(
-    repo_path: Path, config: str, scanner: Scanner = "semgrep"
+    repo_path: Path, config: str | Sequence[str], scanner: Scanner = "semgrep"
 ) -> list[str]:
     """argv for one scan. Opengrep takes the same subcommand and flags, except
-    that it removed telemetry and with it ``--metrics``, which it rejects (exit 2)."""
+    that it removed telemetry and with it ``--metrics``, which it rejects (exit 2).
+    ``config`` is one --config value or several (rule folders, registry packs)."""
     if scanner not in SEMGREP_FAMILY:
         # Cppcheck has its own argv and output format: equill.cppcheck.
         raise ValueError(f"scanner must be one of {SEMGREP_FAMILY}, got {scanner!r}")
     args = [scanner, "scan", "--json", "--quiet"]
     if scanner == "semgrep":
         args.append("--metrics=off")
-    return args + ["--config", config, str(repo_path)]
+    configs = [config] if isinstance(config, str) else list(config)
+    if not configs:
+        raise ValueError("at least one --config is required")
+    for c in configs:
+        args += ["--config", c]
+    return args + [str(repo_path)]
 
 
 def _is_utf8(locale_name: str) -> bool:
@@ -121,7 +127,7 @@ def _failure_detail(result: SubprocessResult, limit: int = 2000) -> str:
 
 def run_semgrep(
     repo_path: Path,
-    config: str = "p/default",
+    config: str | Sequence[str] = "p/default",
     timeout: int = 1800,
     runner: CommandRunner | None = None,
     scanner: Scanner = "semgrep",

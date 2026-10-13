@@ -150,6 +150,8 @@ def render_summary(
     if report.commit_sha:
         meta.append(f"commit `{report.commit_sha[:12]}`")
     meta.append(f"scanner `{report.scanner}`")
+    if report.rules:
+        meta.append(f"rules {_cell(report.rules)}")
     models = sorted({m.model for m in report.mappings})
     if models:
         meta.append("mapper " + ", ".join(f"`{_cell(m)}`" for m in models))

@@ -242,3 +242,7 @@ class Report(BaseModel):
     # and example directories; equill.cppcheck.DEFAULT_PATH_EXCLUDE), or None
     # when none was: the published Semgrep runs excluded nothing.
     path_exclude: str | None = None
+    # The rules the scan ran with, as a short provenance string: for the default
+    # open rules "opengrep/opengrep-rules@<commit> (<folders>)", otherwise the
+    # --config values. None for a recorded scanner output or a Cppcheck run.
+    rules: str | None = None

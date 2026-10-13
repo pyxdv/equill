@@ -314,11 +314,14 @@ def test_pipeline_fills_the_placeholder_only_when_asked(tmp_path, monkeypatch):
     _write(tmp_path, "src/a.php", "<?php\n$a = 1;\necho $_GET['x'];\n")
     monkeypatch.chdir(tmp_path)
     payload = {"results": [_result()]}
-    kept = run_pipeline(PipelineConfig(repo_path=tmp_path, commit_sha="c"), _Runner(payload))
+    # The placeholder is what an unauthenticated Semgrep writes.
+    kept = run_pipeline(PipelineConfig(repo_path=tmp_path, commit_sha="c", scanner="semgrep"),
+                        _Runner(payload))
     assert kept.snippet_fallback is False
     assert kept.findings[0].snippet == LOGIN_PLACEHOLDER
     filled = run_pipeline(
-        PipelineConfig(repo_path=tmp_path, commit_sha="c", snippet_fallback=True),
+        PipelineConfig(repo_path=tmp_path, commit_sha="c", snippet_fallback=True,
+                       scanner="semgrep"),
         _Runner(payload),
     )
     assert filled.snippet_fallback is True

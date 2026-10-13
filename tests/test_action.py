@@ -138,7 +138,7 @@ def test_action_yml_wires_every_input_and_output():
 
     env_values = " ".join(str(v) for v in run_step["env"].values())
     used = set(re.findall(r"inputs\.([a-z-]+)", env_values))
-    install_only = {"semgrep-version", "python-version"}
+    install_only = {"semgrep-version", "python-version", "opengrep-version", "opengrep-sha256"}
     assert used | install_only == set(action["inputs"])
 
     script = SCRIPT.read_text(encoding="utf-8")
@@ -164,3 +164,16 @@ def test_action_leaves_the_callers_python_and_path_alone():
         assert "GITHUB_ENV" not in str(step.get("run", "")), step.get("name")
     run_step = next(s for s in steps if s.get("id") == "run")
     assert "semgrep-venv/bin" in run_step["run"]
+
+
+def test_action_installs_opengrep_on_linux_and_macos_with_pinned_hashes():
+    action = yaml.safe_load((REPO / "action.yml").read_text(encoding="utf-8"))
+    step = next(s for s in action["runs"]["steps"] if s.get("name") == "Install Opengrep")
+    run = step["run"]
+    for asset in ("opengrep_manylinux_x86", "opengrep_manylinux_aarch64",
+                  "opengrep_osx_arm64", "opengrep_osx_x86"):
+        assert asset in run
+    assert len(re.findall(r"pinned=[0-9a-f]{64}", run)) == 4
+    assert "shasum -a 256" in run and "sha256sum -c" in run
+    assert action["inputs"]["scanner"]["default"] == "opengrep"
+    assert action["inputs"]["config"]["default"] == "auto"

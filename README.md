@@ -2,17 +2,17 @@
 
 **ISO/IEC 25010 quality evidence from your SAST findings, in one CI step.**
 
-equill runs Semgrep (or Opengrep, or Cppcheck), maps every finding to an
-ISO/IEC 25010 characteristic and sub-characteristic through curated tables, and
-gives you:
+equill runs [Opengrep](https://github.com/opengrep/opengrep) with open rules
+(or Semgrep, or Cppcheck), maps every finding to an ISO/IEC 25010
+characteristic and sub-characteristic through curated tables, and gives you:
 
 - `report.sarif`: SARIF 2.1.0 for GitHub code scanning, with each finding's ISO/IEC 25010 mapping in its message and property bag (`quillMapping`, the keys quill writes, so tools reading quill's SARIF read equill's);
 - a **Markdown summary** on the job page, covering characteristics, file hotspots and the CWEs the table does not cover yet;
 - a **quality gate**, for example "fail on any actionable security or reliability finding";
 - `report.json` and `scores.json` for anything else you want to build.
 
-The mapping is deterministic, so equill needs no LLM, no GPU and no vector store, and has two
-runtime dependencies (pydantic, typer). It is the CI-sized distribution of
+The mapping is deterministic, so equill needs no LLM, no GPU, no vector store
+and no scanner login, and has two runtime dependencies (pydantic, typer). It is the CI-sized distribution of
 **quill**, a research artifact that maps SAST findings to ISO/IEC 25010 with
 small local LLMs; equill ships quill's curated tables and its deterministic
 mappers, scorer, SARIF export and summary, and leaves the LLM pipeline behind.
@@ -36,7 +36,6 @@ jobs:
       - id: equill
         uses: pyxdv/equill@v1
         with:
-          config: p/default        # or p/python, p/javascript, a rules dir, ...
           fail-on: security        # or: max-actionable: 0
 
       - if: ${{ !cancelled() && steps.equill.outputs.sarif != '' }}
@@ -49,35 +48,73 @@ jobs:
 | input | default | meaning |
 |---|---|---|
 | `path` | `.` | directory to scan, relative to the workspace |
-| `scanner` | `semgrep` | `semgrep`, `opengrep` (must already be on `PATH`) or `cppcheck` |
-| `config` | `p/default` | Semgrep/Opengrep `--config` |
-| `scanner-output` | | a Semgrep JSON, or (with `scanner: cppcheck`) a Cppcheck XML, your workflow already produced; mapped instead of scanning |
+| `scanner` | `opengrep` | `opengrep` (installed by the action on Linux and macOS runners), `semgrep` (installed by the action) or `cppcheck` |
+| `config` | `auto` | `auto` picks the open rules for the languages in the repository (Opengrep) or `p/default` (Semgrep); otherwise registry packs or rule paths, comma-separated |
+| `scanner-output` | | a scan your workflow already produced, mapped instead of scanning: Semgrep JSON with `scanner: semgrep`, Opengrep JSON with the default, Cppcheck XML with `scanner: cppcheck` |
 | `fail-on` | | comma-separated characteristics, or `all`; fails on any actionable finding in them |
 | `max-actionable` | | fails above this many actionable findings (`0` = none allowed) |
 | `output-dir` | `equill-report` | where the artifacts go |
-| `semgrep-version` | latest | pin Semgrep, e.g. `1.95.0` |
+| `opengrep-version` | `v1.30.2` | Opengrep release; the default binary is checked against a pinned SHA-256 |
+| `opengrep-sha256` | | SHA-256 of the binary, required for any other `opengrep-version` |
+| `semgrep-version` | latest | pin Semgrep, e.g. `1.95.0`, when `scanner: semgrep` |
 | `python-version` | `3.12` | Python used for equill and Semgrep |
 
 Outputs: `report`, `sarif`, `scores`, `summary` (paths); `findings`, `mapped`,
 `actionable`, `sites` (counts); `gate` (`passed` / `failed`). The step fails
 when the gate does, after the summary is on the job page.
 
-Already running Semgrep? Pass its JSON with `scanner-output: semgrep.json` and
-equill skips the second scan. For C/C++, set `scanner: cppcheck`; to map a
+Already running Semgrep? Pass its JSON with `scanner: semgrep` and
+`scanner-output: semgrep.json`, and equill skips the second scan (the
+`scanner` input is what report.json records as the source). For C/C++, set `scanner: cppcheck`; to map a
 report your workflow already produced, also pass `scanner-output: cppcheck.xml`
 (from `cppcheck --xml`).
+
+## Scanner and rules
+
+By default equill runs **Opengrep** (LGPL-2.1), the open fork of Semgrep CE,
+with **[opengrep-rules](https://github.com/opengrep/opengrep-rules)**, the
+community rules as they were before Semgrep's licence change, under LGPL-2.1
+with the Commons Clause: free to use and redistribute, not to sell.
+
+- **Pinned.** The rules come from one commit
+  (`f1d2b562b414`, 2025-01-26), fetched once per machine into
+  `~/.cache/equill` and checked against a pinned digest; the Action's Opengrep
+  binary is checked against a pinned SHA-256. Run `equill rules` to fetch ahead
+  of an offline scan and see what is selected.
+- **Curated.** Test fixtures and `audit` rules (written for manual security
+  audits, noisy by design) are left out: about 1,500 rules in 1,451 files
+  remain.
+- **Selected by language.** Only the rule folders for the languages present in
+  the scanned tree (by file extension), plus hard-coded-secret detection, are
+  loaded, so a Python repository parses a few hundred rules, not all of them.
+- **Code in every finding.** Opengrep reports the flagged source line; an
+  unauthenticated Semgrep writes `requires login` instead.
+- **Recorded and stable.** `report.json` and the summary page name the rules a
+  scan used, and rule ids are the rules' own (`python.flask.security...`), the
+  same on every machine, so code-scanning alerts keep their identity.
+
+`scanner: semgrep` keeps the 1.0 behaviour: Semgrep with the `p/default`
+registry pack. Registry packs are under the
+[Semgrep Rules License](https://semgrep.dev/legal/rules-license/) (internal use
+only, no redistribution or offering as a service) and are fetched by Semgrep
+itself on your runner; `config:` accepts them with Opengrep too.
+
+Like Semgrep, Opengrep skips `test/` and `tests/` paths by default.
 
 ## Command line
 
 ```bash
 pip install "equill @ git+https://github.com/pyxdv/equill@v1"
-equill scan . --config p/python                 # equill-report/{report.json,report.sarif,scores.json}
+# Opengrep on PATH: https://github.com/opengrep/opengrep/releases
+equill scan .                                   # equill-report/{report.json,report.sarif,scores.json}
 equill summary equill-report/report.json        # Markdown to stdout
 equill summary equill-report/report.json -o summary.md --fail-on security   # exit 1 if it trips
 ```
 
-`equill scan --scanner-output semgrep.json` maps a scan you already have, and
-`--reference` / `--checker-table` swap in your own tables.
+`equill scan --scanner-output semgrep.json` maps a scan you already have,
+`--scanner semgrep` uses Semgrep and `p/default`, `--config` takes registry
+packs or rule folders, and `--reference` / `--checker-table` swap in your own
+tables.
 
 ## What gets counted
 
@@ -126,7 +163,14 @@ part of this repository.
 
 ## Licence
 
-MIT; see [`LICENSE`](./LICENSE). Semgrep, Opengrep and Cppcheck are separate
-tools under their own licences, installed at run time and not redistributed.
-Semgrep Registry rules (`p/default`, …) are fetched by Semgrep under the
-Semgrep Rules License; no rule file is part of this repository.
+MIT; see [`LICENSE`](./LICENSE). Opengrep (LGPL-2.1), Semgrep (LGPL-2.1) and
+Cppcheck (GPL-3.0) are separate tools under their own licences, installed at
+run time and not redistributed. No rule file is part of this repository:
+opengrep-rules (LGPL-2.1 with the Commons Clause) are downloaded at run time
+from their own repository, and Semgrep Registry packs (`p/default`, …) are
+fetched by Semgrep under the Semgrep Rules License. The ISO/IEC 25010
+standard's text is not reproduced either: the tables hold characteristic names
+and rationales written for them.
+
+`sample/vulnerable_app` is deliberately insecure code for the CI scan; never
+deploy it.

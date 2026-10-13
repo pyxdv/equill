@@ -10,8 +10,8 @@
 # Inputs, as environment variables:
 #
 #   EQUILL_PATH            directory to scan, relative to the working directory (.)
-#   EQUILL_SCANNER         semgrep | opengrep | cppcheck (semgrep)
-#   EQUILL_CONFIG          Semgrep/Opengrep --config (p/default)
+#   EQUILL_SCANNER         opengrep | semgrep | cppcheck (opengrep)
+#   EQUILL_CONFIG          --config: auto, or registry packs / rule paths (auto)
 #   EQUILL_SCANNER_OUTPUT  recorded Semgrep JSON or Cppcheck XML to map instead
 #                          of running the scanner (empty: run it)
 #   EQUILL_OUTPUT_DIR      where the artifacts go (equill-report)
@@ -31,8 +31,8 @@ equill="${EQUILL_BIN:-equill}"
 python="${EQUILL_PYTHON:-python3}"
 
 args=(scan "$target"
-  --scanner "${EQUILL_SCANNER:-semgrep}"
-  --config "${EQUILL_CONFIG:-p/default}"
+  --scanner "${EQUILL_SCANNER:-opengrep}"
+  --config "${EQUILL_CONFIG:-auto}"
   --output "$out")
 if [ -n "${EQUILL_NAME:-}" ]; then
   args+=(--name "$EQUILL_NAME")
